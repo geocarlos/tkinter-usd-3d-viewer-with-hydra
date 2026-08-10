@@ -8,10 +8,15 @@ from viewport import USDGLViewport
 
 
 class USDViewerTk(tk.Tk):
-    def __init__(self, width=800, height=600):
+    def __init__(self, width=800, height=700):
         super().__init__()
         self.title("Tkinter USD 3D Viewer")
         self.geometry(f"{width}x{height}")
+        # Without this, the viewport's own requested size (below) plus the
+        # toolbar/playback/status rows can exceed a hand-shrunk window, and
+        # Tk collapses whichever packed row loses out to 1x1 -- invisible,
+        # not just small -- rather than shrinking everything proportionally.
+        self.minsize(width, height)
 
         self.open_bar = tk.Frame(self)
         self.open_bar.pack(side=tk.TOP, pady=5)
@@ -52,7 +57,11 @@ class USDViewerTk(tk.Tk):
                                               command=self.on_background_changed)
         self.background_menu.pack(side=tk.LEFT, padx=(2, 0))
 
-        self.viewport = USDGLViewport(self, width=width, height=height)
+        # No explicit width/height here -- pack(fill=BOTH, expand=True) sizes
+        # the viewport from whatever room remains after the rows above/below
+        # claim their own natural size. Requesting the *window's* full size
+        # for the viewport too (as before) starves those rows of space.
+        self.viewport = USDGLViewport(self)
         self.viewport.pack(fill=tk.BOTH, expand=True)
 
         self.playback = tk.Frame(self)
