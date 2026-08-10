@@ -12,6 +12,17 @@ from gl_helpers import to_gl_matrix
 # matches usdview's defaults; "guide" is deliberately left out of both.
 BBOX_PURPOSES = [UsdGeom.Tokens.default_, UsdGeom.Tokens.proxy, UsdGeom.Tokens.render]
 
+# A stage's authored upAxis ("Y" or "Z") says which stage-space axis is
+# vertical -- it does not change how Hydra renders (Hydra just draws the
+# geometry as authored), only how a viewer's camera ought to be oriented.
+# Our orbit camera is hardcoded Y-up (see get_view_matrix()/_draw_grid()),
+# so a Z-up stage needs this rotation to align its up axis with ours --
+# same problem usdview solves by orienting its default camera from this
+# same stage metadata.
+UP_AXIS_ROTATIONS = {
+    UsdGeom.Tokens.z: Gf.Rotation(Gf.Vec3d(1, 0, 0), -90.0),
+}
+
 # Hydra has no built-in "visualize vertex normals as RGB" draw mode, so
 # "Normals" keeps DRAW_SHADED_SMOOTH's full shading geometry and instead
 # swaps the displayed AOV to Storm's eye-space normal buffer ("Neye").
@@ -40,6 +51,7 @@ class USDGLViewport(OpenGLFrame):
         self.engine = None
         self.stage = None
         self.time_code = Usd.TimeCode.Default()
+        self.up_axis_rotation = None  # set from the stage's upAxis on load_stage()
 
         self.center = Gf.Vec3d(0, 0, 0)
         self.cam_dist = 10.0
@@ -50,6 +62,8 @@ class USDGLViewport(OpenGLFrame):
         self.rot_y = self.DEFAULT_ROT_Y
         self.last_mouse_x = 0
         self.last_mouse_y = 0
+        self.last_pan_x = 0
+        self.last_pan_y = 0
 
         self.shading_mode = "Shaded"  # "Shaded" | "Solid" | "Wireframe" | "Normals"
         self.show_bbox = False
@@ -59,6 +73,10 @@ class USDGLViewport(OpenGLFrame):
         self.bind("<ButtonPress-1>", self.on_mouse_down)
         self.bind("<B1-Motion>", self.on_mouse_drag)
         self.bind("<MouseWheel>", self.on_zoom)
+        self.bind("<ButtonPress-2>", self.on_pan_down)
+        self.bind("<B2-Motion>", self.on_pan_drag)
+        self.bind("<Shift-ButtonPress-1>", self.on_pan_down)
+        self.bind("<Shift-B1-Motion>", self.on_pan_drag)
 
     def initgl(self):
         if self.engine is not None:
@@ -67,6 +85,15 @@ class USDGLViewport(OpenGLFrame):
         GL.glShadeModel(GL.GL_SMOOTH)
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
 
+        self._create_engine()
+
+    def _create_engine(self):
+        """A fresh UsdImagingGL.Engine has its own Hydra render index -- it
+        must be rebuilt whenever a *different* stage is loaded, or leftover
+        state from the previous stage corrupts the render (this is also why
+        usdview's own _closeStage() drops its renderer before opening the
+        next file). Not needed for time/camera changes on the same stage."""
+        self.tkMakeCurrent()
         self.engine = UsdImagingGL.Engine()
         self._set_lighting_state()
 
@@ -76,15 +103,18 @@ class USDGLViewport(OpenGLFrame):
         this only when the stage has no UsdLux lights)."""
         light = Glf.SimpleLight()
         light.position = Gf.Vec4f(5.0, 10.0, 5.0, 0.0)
-        light.diffuse = Gf.Vec4f(0.9, 0.9, 0.9, 1.0)
+        light.diffuse = Gf.Vec4f(1.4, 1.4, 1.4, 1.0)
         light.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
         material = Glf.SimpleMaterial()
-        scene_ambient = Gf.Vec4f(0.15, 0.15, 0.15, 1.0)
+        scene_ambient = Gf.Vec4f(0.3, 0.3, 0.3, 1.0)
         self.engine.SetLightingState([light], material, scene_ambient)
 
     def load_stage(self, stage, time_code=Usd.TimeCode.Default()):
         self.stage = stage
         self.time_code = time_code
+        self.up_axis_rotation = UP_AXIS_ROTATIONS.get(UsdGeom.GetStageUpAxis(stage))
+        if self.engine is not None:
+            self._create_engine()
         self.frame_camera_on_geometry()
         self.tkExpose(None)
 
@@ -114,6 +144,17 @@ class USDGLViewport(OpenGLFrame):
         mins, maxs = world_range.GetMin(), world_range.GetMax()
         radius = world_range.GetSize().GetLength() / 2.0
 
+        # bbox_min/bbox_max/center are kept in *display* space (Y-up, matching
+        # the grid) rather than raw stage space, so the bbox overlay -- drawn
+        # with the same plain, up-axis-agnostic get_view_matrix() as the grid
+        # -- lines up with the (separately axis-corrected) Hydra geometry
+        # instead of floating at an unrelated angle to it.
+        if self.up_axis_rotation is not None:
+            up_axis_mat = Gf.Matrix4d().SetRotate(self.up_axis_rotation)
+            r_mins, r_maxs = up_axis_mat.Transform(mins), up_axis_mat.Transform(maxs)
+            mins = Gf.Vec3d(*(min(a, b) for a, b in zip(r_mins, r_maxs)))
+            maxs = Gf.Vec3d(*(max(a, b) for a, b in zip(r_mins, r_maxs)))
+
         self.bbox_min = mins
         self.bbox_max = maxs
         self.center = (mins + maxs) / 2.0
@@ -122,6 +163,9 @@ class USDGLViewport(OpenGLFrame):
         self.cam_dist = max(1.0, (self.radius / math.sin(half_fov)) * 1.2)
 
     def get_view_matrix(self):
+        """The shared camera used for the grid and bounding-box overlay --
+        both already in display space (Y-up). Hydra's camera additionally
+        prepends the up-axis correction; see _render_stage()."""
         center_mat = Gf.Matrix4d().SetTranslate(-self.center)
         rot = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), self.rot_x)) * \
               Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0, 1, 0), self.rot_y))
@@ -201,6 +245,12 @@ class USDGLViewport(OpenGLFrame):
         GL.glEnd()
 
     def _render_stage(self, view_matrix, projection_matrix, width, height):
+        # Unlike the grid/bbox overlay, Hydra draws the stage's own raw
+        # (un-corrected) geometry, so its camera needs the up-axis rotation
+        # prepended here -- see the UP_AXIS_ROTATIONS comment above.
+        if self.up_axis_rotation is not None:
+            view_matrix = Gf.Matrix4d().SetRotate(self.up_axis_rotation) * view_matrix
+
         self.engine.SetRenderViewport((0, 0, width, height))
         self.engine.SetCameraState(view_matrix, projection_matrix)
         self.engine.SetRendererAov("Neye" if self.shading_mode == "Normals" else "color")
@@ -287,4 +337,34 @@ class USDGLViewport(OpenGLFrame):
         min_dist = max(self.radius * 0.01, 1e-4)
         max_dist = self.radius * 100.0
         self.cam_dist = min(max(self.cam_dist * factor, min_dist), max_dist)
+        self.tkExpose(None)
+
+    def _camera_right_up(self):
+        """World-space (display-space; see UP_AXIS_ROTATIONS) right/up unit
+        vectors for the camera's current orbit orientation, used to convert
+        a screen-space pan drag into a world-space offset for self.center."""
+        rot = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), self.rot_x)) * \
+              Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0, 1, 0), self.rot_y))
+        inv_rot = rot.GetInverse()
+        return inv_rot.TransformDir(Gf.Vec3d(1, 0, 0)), inv_rot.TransformDir(Gf.Vec3d(0, 1, 0))
+
+    def on_pan_down(self, event):
+        self.last_pan_x = event.x
+        self.last_pan_y = event.y
+
+    def on_pan_drag(self, event):
+        dx = event.x - self.last_pan_x
+        dy = event.y - self.last_pan_y
+
+        # Scale by the world-space distance a single pixel covers at the
+        # camera's current distance/FOV, so a drag pans by the same visible
+        # fraction of the view regardless of zoom level or window size.
+        half_fov = math.radians(45.0 / 2.0)
+        world_per_pixel = (2.0 * self.cam_dist * math.tan(half_fov)) / max(1, self.winfo_height())
+
+        right, up = self._camera_right_up()
+        self.center = self.center - right * dx * world_per_pixel + up * dy * world_per_pixel
+
+        self.last_pan_x = event.x
+        self.last_pan_y = event.y
         self.tkExpose(None)
