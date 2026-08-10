@@ -1,0 +1,12 @@
+name: tkinter-usd-3d-viewer
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - numpy>=2.5.2
+  - pillow>=12.3.0
+  - pyopengl>=3.1.10
+  - openusd>=26.5
+  - pip
+  - pip:
+      - pyopengltk>=0.0.4
