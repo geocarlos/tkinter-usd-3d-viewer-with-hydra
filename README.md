@@ -1,6 +1,6 @@
 # Tkinter USD 3D Viewer
 
-A lightweight desktop viewer for [OpenUSD](https://openusd.org/) files, built with Tkinter and raw OpenGL (via [`pyopengltk`](https://pypi.org/project/pyopengltk/)). It renders `Mesh`, `Cube`, and `Sphere` prims using a fixed-function orbit camera — no Hydra or `UsdImagingGL` required.
+A lightweight desktop viewer for [OpenUSD](https://openusd.org/) files, built with Tkinter and raw OpenGL (via [`pyopengltk`](https://pypi.org/project/pyopengltk/)). It renders `Mesh`, `Cube`, `Sphere`, `Cone`, `Cylinder`, and `Capsule` prims using a fixed-function orbit camera — no Hydra or `UsdImagingGL` required.
 
 ## Features
 
@@ -53,12 +53,12 @@ Click **Open USD File** to load a stage, then:
 | `app.py` | Entry point — launches the Tk application |
 | `main_window.py` | `USDViewerTk` — the main window: toolbar, playback controls, file loading, and hot-reload |
 | `viewport.py` | `USDGLViewport` — the OpenGL Tkinter widget: camera, rendering, mouse input |
-| `usd_geometry.py` | Walks a USD stage and fan-triangulates `Mesh`/`Cube`/`Sphere` prims into position/normal/color/UV arrays, grouped by bound texture |
+| `usd_geometry.py` | Walks a USD stage and fan-triangulates `Mesh`/`Cube`/`Sphere`/`Cone`/`Cylinder`/`Capsule` prims into position/normal/color/UV arrays, grouped by bound texture |
 | `gl_helpers.py` | Generic OpenGL helpers — matrix conversion and texture loading |
 | `constants.py` | Shared color and background constants |
 
 ## Limitations
 
-- Only `Mesh`, `Cube`, and `Sphere` prims are rendered (no `Cone`, `Cylinder`, `Capsule`, curves, or points)
+- Only `Mesh`, `Cube`, `Sphere`, `Cone`, `Cylinder`, and `Capsule` prims are rendered (no curves or points)
 - Fan triangulation assumes convex polygon faces
 - Uses fixed-function OpenGL lighting (single directional light), not a physically based renderer
