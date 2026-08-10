@@ -19,11 +19,11 @@ class USDViewerTk(tk.Tk):
         self.lbl_filename = tk.Label(self.open_bar, text="")
         self.lbl_filename.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.btn_open = tk.Button(self.open_bar, text="Open USD File", command=self.load_file)
-        self.btn_open.pack(side=tk.LEFT)
-
         self.toolbar = tk.Frame(self)
         self.toolbar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(0, 5))
+
+        self.btn_open = tk.Button(self.toolbar, text="Open USD File", command=self.load_file)
+        self.btn_open.pack(side=tk.RIGHT)
 
         tk.Label(self.toolbar, text="Shading:").pack(side=tk.LEFT)
         self.shading_var = tk.StringVar(value="Shaded")
