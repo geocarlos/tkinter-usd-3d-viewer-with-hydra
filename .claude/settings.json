@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pxr; print\\(pxr.__file__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m pip show usd-core)",
+      "Bash(.venv/Scripts/python.exe -c \"import pyopengltk; print\\(pyopengltk.__file__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import OpenGL; print\\(OpenGL.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"from OpenGL import GL; print\\('GL ok'\\)\")",
+      "Bash(uv add *)",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\smoke_test.py\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\smoke_test2.py\")",
+      "Bash(.venv/Scripts/python.exe -c \"from pxr import Usd, UsdGeom, Vt, Gf; print\\('ok'\\)\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\live_run.py\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\live_run2.py\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\make_test_assets.py\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\live_run3.py\")",
+      "Bash(.venv/Scripts/python.exe \"C:\\\\Users\\\\GEOCAR~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-geocarlos-workspace-Geo-code2graphics-tkinter-app\\\\0a8a43f4-3780-452f-aaf6-d106ff3be6f2\\\\scratchpad\\\\live_run_tex.py\")",
+      "WebFetch(domain:marketplace.visualstudio.com)"
+    ]
+  }
+}
