@@ -58,6 +58,128 @@ def sphere_faces(radius, rings=12, segments=16):
     return points, counts, indices
 
 
+def _apply_axis(point, axis):
+    """Rotates a point defined in a local Z-spine frame onto the given
+    UsdGeom "axis" token ("X" | "Y" | "Z"), using a proper rotation (not an
+    axis swap) so that outward-facing winding stays outward regardless of
+    which axis the prim is aligned to."""
+    x, y, z = point
+    if axis == "X":
+        return (z, y, -x)
+    if axis == "Y":
+        return (x, z, -y)
+    return (x, y, z)
+
+
+def cone_faces(height, radius, axis="Z", segments=24):
+    """Points/faceVertexCounts/faceVertexIndices for a UsdGeom.Cone: an apex
+    at +height/2 along the local Z spine, tapering to a capped base circle
+    of the given radius at -height/2, then rotated onto the given axis."""
+    hh = height / 2.0
+    apex = [(0.0, 0.0, hh)] * segments
+    base_ring = []
+    for j in range(segments):
+        phi = 2.0 * math.pi * j / segments
+        base_ring.append((radius * math.cos(phi), radius * math.sin(phi), -hh))
+    base_center_index = 2 * segments
+    points = apex + base_ring + [(0.0, 0.0, -hh)]
+
+    counts = []
+    indices = []
+    for j in range(segments):
+        j_next = (j + 1) % segments
+        apex_j, base_j, base_jn = j, segments + j, segments + j_next
+
+        counts.append(3)
+        indices.extend((apex_j, base_j, base_jn))
+        counts.append(3)
+        indices.extend((base_center_index, base_jn, base_j))
+
+    points = [_apply_axis(p, axis) for p in points]
+    return points, counts, indices
+
+
+def cylinder_faces(height, radius, axis="Z", segments=24):
+    """Points/faceVertexCounts/faceVertexIndices for a UsdGeom.Cylinder: two
+    capped circles of the given radius, height apart along the local Z
+    spine, then rotated onto the given axis."""
+    hh = height / 2.0
+    top_ring = []
+    bottom_ring = []
+    for j in range(segments):
+        phi = 2.0 * math.pi * j / segments
+        x, y = radius * math.cos(phi), radius * math.sin(phi)
+        top_ring.append((x, y, hh))
+        bottom_ring.append((x, y, -hh))
+    top_center_index = 2 * segments
+    bottom_center_index = 2 * segments + 1
+    points = top_ring + bottom_ring + [(0.0, 0.0, hh), (0.0, 0.0, -hh)]
+
+    counts = []
+    indices = []
+    for j in range(segments):
+        j_next = (j + 1) % segments
+        top_j, top_jn = j, j_next
+        bot_j, bot_jn = segments + j, segments + j_next
+
+        counts.append(4)
+        indices.extend((top_j, bot_j, bot_jn, top_jn))
+        counts.append(3)
+        indices.extend((top_center_index, top_j, top_jn))
+        counts.append(3)
+        indices.extend((bottom_center_index, bot_jn, bot_j))
+
+    points = [_apply_axis(p, axis) for p in points]
+    return points, counts, indices
+
+
+def capsule_faces(height, radius, axis="Z", segments=24, hemisphere_rings=6):
+    """Points/faceVertexCounts/faceVertexIndices for a UsdGeom.Capsule: a
+    cylindrical band of the given height capped by hemispheres of the given
+    radius, then rotated onto the given axis. Built as a sphere-like stack of
+    latitude rings (pole -> pole), with the equator duplicated so the two
+    hemispheres are joined by a straight (non-tapering) cylindrical band."""
+    hh = height / 2.0
+
+    ring_specs = []
+    for i in range(hemisphere_rings + 1):
+        theta = (math.pi / 2.0) * i / hemisphere_rings
+        ring_specs.append((hh + radius * math.cos(theta), radius * math.sin(theta)))
+    ring_specs.append((-hh, radius))
+    for i in range(1, hemisphere_rings + 1):
+        theta = (math.pi / 2.0) * i / hemisphere_rings
+        ring_specs.append((-hh - radius * math.sin(theta), radius * math.cos(theta)))
+
+    points = []
+    for z, ring_radius in ring_specs:
+        for j in range(segments):
+            phi = 2.0 * math.pi * j / segments
+            points.append((ring_radius * math.cos(phi), ring_radius * math.sin(phi), z))
+
+    counts = []
+    indices = []
+    ring_count = len(ring_specs) - 1
+    for i in range(ring_count):
+        for j in range(segments):
+            j_next = (j + 1) % segments
+            top_left = i * segments + j
+            top_right = i * segments + j_next
+            bot_left = (i + 1) * segments + j
+            bot_right = (i + 1) * segments + j_next
+            if i == 0:
+                counts.append(3)
+                indices.extend((top_left, bot_left, bot_right))
+            elif i == ring_count - 1:
+                counts.append(3)
+                indices.extend((top_left, bot_left, top_right))
+            else:
+                counts.append(4)
+                indices.extend((top_left, bot_left, bot_right, top_right))
+
+    points = [_apply_axis(p, axis) for p in points]
+    return points, counts, indices
+
+
 def get_display_colors(prim, time_code):
     """Returns (interpolation, flattened Vt.Vec3fArray) for a Gprim's
     displayColor primvar, or (None, None) if none is authored."""
@@ -191,6 +313,27 @@ def extract_triangles(stage, time_code=Usd.TimeCode.Default()):
         elif prim.IsA(UsdGeom.Sphere):
             radius = UsdGeom.Sphere(prim).GetRadiusAttr().Get(time_code) or 1.0
             points, counts, indices = sphere_faces(radius)
+
+        elif prim.IsA(UsdGeom.Cone):
+            cone = UsdGeom.Cone(prim)
+            height = cone.GetHeightAttr().Get(time_code) or 2.0
+            radius = cone.GetRadiusAttr().Get(time_code) or 1.0
+            axis = cone.GetAxisAttr().Get(time_code) or "Z"
+            points, counts, indices = cone_faces(height, radius, axis)
+
+        elif prim.IsA(UsdGeom.Cylinder):
+            cylinder = UsdGeom.Cylinder(prim)
+            height = cylinder.GetHeightAttr().Get(time_code) or 2.0
+            radius = cylinder.GetRadiusAttr().Get(time_code) or 1.0
+            axis = cylinder.GetAxisAttr().Get(time_code) or "Z"
+            points, counts, indices = cylinder_faces(height, radius, axis)
+
+        elif prim.IsA(UsdGeom.Capsule):
+            capsule = UsdGeom.Capsule(prim)
+            height = capsule.GetHeightAttr().Get(time_code) or 2.0
+            radius = capsule.GetRadiusAttr().Get(time_code) or 0.5
+            axis = capsule.GetAxisAttr().Get(time_code) or "Z"
+            points, counts, indices = capsule_faces(height, radius, axis)
 
         else:
             continue
