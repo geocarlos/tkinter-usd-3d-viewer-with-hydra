@@ -50,14 +50,7 @@ class USDViewerTk(tk.Tk):
         self.background_menu = tk.OptionMenu(self.toolbar, self.background_var,
                                               "Black", "Gray", "Sky", "Foggy",
                                               command=self.on_background_changed)
-        self.background_menu.pack(side=tk.LEFT, padx=(2, 10))
-
-        tk.Label(self.toolbar, text="Curves/Points:").pack(side=tk.LEFT)
-        self.curves_points_var = tk.StringVar(value="Solid")
-        self.curves_points_menu = tk.OptionMenu(self.toolbar, self.curves_points_var,
-                                                  "Solid", "Lightweight",
-                                                  command=self.on_curves_points_changed)
-        self.curves_points_menu.pack(side=tk.LEFT, padx=(2, 0))
+        self.background_menu.pack(side=tk.LEFT, padx=(2, 0))
 
         self.viewport = USDGLViewport(self, width=width, height=height)
         self.viewport.pack(fill=tk.BOTH, expand=True)
@@ -147,13 +140,6 @@ class USDViewerTk(tk.Tk):
         self.viewport.background_mode = mode
         self.viewport.tkExpose(None)
 
-    def on_curves_points_changed(self, mode):
-        self.viewport.curves_points_mode = mode
-        if self.stage is not None:
-            self._safe_set_time(Usd.TimeCode(self.time_var.get()))
-        else:
-            self.viewport.tkExpose(None)
-
     def reset_view(self):
         self.viewport.frame_camera_on_geometry()
         self.viewport.tkExpose(None)
@@ -180,15 +166,13 @@ class USDViewerTk(tk.Tk):
         self.lbl_filename.config(text=filename)
         self.btn_open.config(text="Open Another USD File")
 
-        triangle_count = self.viewport.load_stage(self.stage)
+        self.viewport.load_stage(self.stage)
         self._setup_playback_range()
 
-        if triangle_count == 0:
-            self.status.config(
-                text="Opened, but found no Mesh/Cube/Sphere geometry to render"
-            )
+        if self.viewport.bbox_min is None:
+            self.status.config(text="Opened, but found no geometry to render")
         else:
-            self.status.config(text=f"Rendered {triangle_count} triangles")
+            self.status.config(text=f"Rendered {filename}")
 
     def _setup_playback_range(self):
         has_range = self.stage.HasAuthoredTimeCodeRange()

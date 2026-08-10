@@ -1,39 +1,37 @@
 # Tkinter USD 3D Viewer
 
-A lightweight desktop viewer for [OpenUSD](https://openusd.org/) files, built with Tkinter and raw OpenGL (via [`pyopengltk`](https://pypi.org/project/pyopengltk/)). It renders `Mesh`, `Cube`, `Sphere`, `Cone`, `Cylinder`, `Capsule`, `Points`, and `BasisCurves` prims using a fixed-function orbit camera — no Hydra or `UsdImagingGL` required.
+A desktop viewer for [OpenUSD](https://openusd.org/) files, built with Tkinter and [`pyopengltk`](https://pypi.org/project/pyopengltk/), rendering through Pixar Hydra (`UsdImagingGL.Engine` / the Storm render delegate). It renders whatever the stage contains — meshes, primitive shapes, `Points`, `BasisCurves` with correct curve-basis evaluation, materials, and lights — the same way `usdview` does, behind a lightweight custom Tk shell with its own orbit camera.
 
 ## Features
 
 - **Open USD files** — `.usd`, `.usda`, `.usdc`, `.usdz`
 - **Orbit camera** — drag to rotate, scroll to zoom (relative zoom that scales with the loaded asset's size)
-- **Auto-framing** — the camera centers and fits itself to whatever geometry is loaded
-- **Shading modes** — Shaded (textures + vertex colors), Solid, Wireframe, and Normals (visualized as RGB)
-- **Textures & colors** — resolves a prim's bound `UsdPreviewSurface` to pull in a `diffuseColor` texture (with `st` UVs) or a constant tint, falling back to authored `displayColor` primvars
-- **Points/Curves rendering modes** — toggle between "Solid" (points as instanced low-poly spheres, curves as instanced tubes, sized by authored `widths`, shaded like any other geometry) and "Lightweight" (raw `GL_POINTS`/`GL_LINES`, ignoring width — cheap regardless of point/segment count, useful for large point clouds or curve caches)
+- **Auto-framing** — the camera centers and fits itself to whatever geometry is loaded, computed from the stage's world-space bounding box
+- **Shading modes** — Shaded (materials + lighting), Solid (lit, materials ignored), Wireframe, and Normals (Storm's eye-space normal AOV)
 - **Bounding box overlay** — toggle a wireframe box around the loaded geometry
 - **Grid toggle** — the ground grid + origin axes are shown by default and can be toggled off
-- **Background modes** — Black, Gray, Sky (gradient), Foggy (with depth fog)
-- **Animation playback** — a time slider and Play/Pause button drive the stage's authored time-code range at its authored frames-per-second
+- **Background modes** — Black, Gray, Sky (gradient), Foggy (depth fog on the grid/bbox overlay only — Hydra-rendered geometry doesn't read legacy `GL_FOG` state)
+- **Animation playback** — a time slider and Play/Pause button drive the stage's authored time-code range at its authored frames-per-second, feeding `Usd.TimeCode` straight into Hydra's render params
 - **Hot reload** — the currently open file is polled once a second and automatically reloaded when its contents change on disk, without resetting the camera. A save that fails to parse is skipped (the last good frame stays on screen) and retried on the next save.
 
 ## Requirements
 
-- Python 3.14 (see `.python-version`)
-- Dependencies (see `pyproject.toml`): `numpy`, `pillow`, `pyopengl`, `pyopengltk`, `usd-core`
+- [conda](https://docs.conda.io/) or [mamba](https://mamba.readthedocs.io/) (e.g. [Miniforge](https://github.com/conda-forge/miniforge)), for the conda-forge `openusd` package (Hydra/`UsdImagingGL`-enabled — the PyPI `usd-core` wheel is not)
+- Python 3.14 and dependencies (see `environment.yml`): `numpy`, `pillow`, `pyopengl`, `openusd`, `pyopengltk` (via pip)
 
 ## Installation
 
-Using [uv](https://docs.astral.sh/uv/):
-
 ```sh
-uv sync
+conda env create -f environment.yml
 ```
 
 ## Usage
 
 ```sh
-uv run app.py
+conda run -n tkinter-usd-3d-viewer python app.py
 ```
+
+`conda run` launches the app directly in the environment with no activation step. If you'd rather activate the environment for your terminal session and then just run `python app.py` repeatedly, use `conda activate tkinter-usd-3d-viewer` instead — but note that on Windows, `conda activate` only works in PowerShell/cmd after running `conda init powershell` (or `conda init cmd.exe`) once; it works out of the box in the Anaconda Prompt shortcut the installer creates, or in bash/zsh after `conda init bash`/`conda init zsh`.
 
 Click **Open USD File** to load a stage, then:
 
@@ -46,7 +44,6 @@ Click **Open USD File** to load a stage, then:
 | Toggle bounding box | "Bounding Box" checkbox |
 | Toggle grid | "Grid" checkbox |
 | Change background | "Background" dropdown |
-| Change points/curves mode | "Curves/Points" dropdown |
 | Scrub time | Time slider (enabled when the stage has an authored time-code range) |
 | Play/pause animation | "Play" button |
 
@@ -56,13 +53,12 @@ Click **Open USD File** to load a stage, then:
 | --- | --- |
 | `app.py` | Entry point — launches the Tk application |
 | `main_window.py` | `USDViewerTk` — the main window: toolbar, playback controls, file loading, and hot-reload |
-| `viewport.py` | `USDGLViewport` — the OpenGL Tkinter widget: camera, rendering, mouse input |
-| `usd_geometry.py` | Walks a USD stage and fan-triangulates `Mesh`/`Cube`/`Sphere`/`Cone`/`Cylinder`/`Capsule` prims into position/normal/color/UV arrays grouped by bound texture, plus "Solid"/"Lightweight" extraction for `Points`/`BasisCurves` |
-| `gl_helpers.py` | Generic OpenGL helpers — matrix conversion and texture loading |
-| `constants.py` | Shared color and background constants |
+| `viewport.py` | `USDGLViewport` — the OpenGL Tkinter widget: orbit camera, Hydra (`UsdImagingGL.Engine`) rendering, grid/bbox overlays, mouse input |
+| `gl_helpers.py` | Generic OpenGL helper — `Gf.Matrix4d` to `glLoadMatrixd` layout conversion |
+| `constants.py` | Shared background-color constants |
 
 ## Limitations
 
-- `BasisCurves` are always treated as linear — for spline bases (bezier/bspline/catmullRom) this renders the control polygon, not the evaluated curve
-- Fan triangulation assumes convex polygon faces
-- Uses fixed-function OpenGL lighting (single directional light), not a physically based renderer
+- A single fixed directional light is provided as a fallback and is only used by Hydra when the stage authors no `UsdLux` lights of its own
+- "Normals" shading mode shows Storm's eye-space normal AOV (`Neye`), not the original's per-vertex world-space RGB visualization — there's no built-in Hydra draw mode for that
+- "Foggy" background fog only affects the grid/bounding-box overlay, not Hydra-rendered geometry

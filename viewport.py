@@ -1,23 +1,32 @@
 import math
 
-import numpy as np
 from OpenGL import GL
 from pyopengltk import OpenGLFrame
 
-from pxr import Usd, Gf
+from pxr import Usd, UsdGeom, UsdImagingGL, Glf, Gf
 
-from constants import BACKGROUND_COLORS, DEFAULT_COLOR, SKY_HORIZON_COLOR, SKY_TOP_COLOR
-from gl_helpers import load_gl_texture, to_gl_matrix
-from usd_geometry import (
-    extract_triangles,
-    extract_lightweight_curves_and_points,
-    extract_solid_curves_and_points,
-)
+from constants import BACKGROUND_COLORS, SKY_HORIZON_COLOR, SKY_TOP_COLOR
+from gl_helpers import to_gl_matrix
+
+# Purposes considered when framing the camera and asking Hydra to draw --
+# matches usdview's defaults; "guide" is deliberately left out of both.
+BBOX_PURPOSES = [UsdGeom.Tokens.default_, UsdGeom.Tokens.proxy, UsdGeom.Tokens.render]
+
+# Hydra has no built-in "visualize vertex normals as RGB" draw mode, so
+# "Normals" keeps DRAW_SHADED_SMOOTH's full shading geometry and instead
+# swaps the displayed AOV to Storm's eye-space normal buffer ("Neye").
+SHADING_DRAW_MODES = {
+    "Shaded": UsdImagingGL.DrawMode.DRAW_SHADED_SMOOTH,
+    "Solid": UsdImagingGL.DrawMode.DRAW_GEOM_SMOOTH,
+    "Wireframe": UsdImagingGL.DrawMode.DRAW_WIREFRAME,
+    "Normals": UsdImagingGL.DrawMode.DRAW_SHADED_SMOOTH,
+}
 
 
 class USDGLViewport(OpenGLFrame):
-    """An OpenGL-backed Tkinter widget that renders USD mesh geometry
-    with a fixed-function orbit camera (no Hydra/UsdImagingGL required)."""
+    """An OpenGL-backed Tkinter widget that renders a USD stage through
+    Hydra (UsdImagingGL.Engine / Storm), with a hand-rolled orbit camera
+    and raw-GL grid/bounding-box overlays composited around it."""
 
     GRID_EXTENT = 10
     GRID_COLOR = (0.25, 0.25, 0.3)
@@ -28,14 +37,9 @@ class USDGLViewport(OpenGLFrame):
         super().__init__(master, **kwargs)
         self.animate = 0  # render on demand, not on a timer
 
-        self.groups = []
-        self.texture_cache = {}  # resolved file path -> GL texture id
-
-        self.curves_points_mode = "Solid"  # "Solid" | "Lightweight"
-        self.point_positions = np.zeros((0, 3), dtype=np.float32)
-        self.point_colors = np.zeros((0, 3), dtype=np.float32)
-        self.line_positions = np.zeros((0, 3), dtype=np.float32)
-        self.line_colors = np.zeros((0, 3), dtype=np.float32)
+        self.engine = None
+        self.stage = None
+        self.time_code = Usd.TimeCode.Default()
 
         self.center = Gf.Vec3d(0, 0, 0)
         self.cam_dist = 10.0
@@ -57,44 +61,38 @@ class USDGLViewport(OpenGLFrame):
         self.bind("<MouseWheel>", self.on_zoom)
 
     def initgl(self):
+        if self.engine is not None:
+            return  # tkResize() calls initgl() again on every resize; the engine survives that
         GL.glEnable(GL.GL_DEPTH_TEST)
-        GL.glEnable(GL.GL_LIGHTING)
-        GL.glEnable(GL.GL_LIGHT0)
-        GL.glLightfv(GL.GL_LIGHT0, GL.GL_POSITION, (5.0, 10.0, 5.0, 0.0))
-        GL.glLightfv(GL.GL_LIGHT0, GL.GL_DIFFUSE, (0.9, 0.9, 0.9, 1.0))
-        GL.glLightfv(GL.GL_LIGHT0, GL.GL_AMBIENT, (0.15, 0.15, 0.15, 1.0))
-        GL.glEnable(GL.GL_COLOR_MATERIAL)
-        GL.glColorMaterial(GL.GL_FRONT_AND_BACK, GL.GL_AMBIENT_AND_DIFFUSE)
         GL.glShadeModel(GL.GL_SMOOTH)
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
-        GL.glColor3f(*DEFAULT_COLOR)
-        GL.glTexEnvi(GL.GL_TEXTURE_ENV, GL.GL_TEXTURE_ENV_MODE, GL.GL_MODULATE)
 
-    def _load_geometry(self, stage, time_code):
-        self.groups = extract_triangles(stage, time_code)
-        if self.curves_points_mode == "Solid":
-            self.groups += extract_solid_curves_and_points(stage, time_code)
-            self.point_positions = np.zeros((0, 3), dtype=np.float32)
-            self.point_colors = np.zeros((0, 3), dtype=np.float32)
-            self.line_positions = np.zeros((0, 3), dtype=np.float32)
-            self.line_colors = np.zeros((0, 3), dtype=np.float32)
-        else:
-            lightweight = extract_lightweight_curves_and_points(stage, time_code)
-            self.point_positions = lightweight["point_positions"]
-            self.point_colors = lightweight["point_colors"]
-            self.line_positions = lightweight["line_positions"]
-            self.line_colors = lightweight["line_colors"]
+        self.engine = UsdImagingGL.Engine()
+        self._set_lighting_state()
+
+    def _set_lighting_state(self):
+        """A single fixed directional light, standing in for a scene light
+        when the stage doesn't author its own (UsdImagingGL falls back to
+        this only when the stage has no UsdLux lights)."""
+        light = Glf.SimpleLight()
+        light.position = Gf.Vec4f(5.0, 10.0, 5.0, 0.0)
+        light.diffuse = Gf.Vec4f(0.9, 0.9, 0.9, 1.0)
+        light.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
+        material = Glf.SimpleMaterial()
+        scene_ambient = Gf.Vec4f(0.15, 0.15, 0.15, 1.0)
+        self.engine.SetLightingState([light], material, scene_ambient)
 
     def load_stage(self, stage, time_code=Usd.TimeCode.Default()):
-        self._load_geometry(stage, time_code)
+        self.stage = stage
+        self.time_code = time_code
         self.frame_camera_on_geometry()
         self.tkExpose(None)
-        return sum(len(g["positions"]) for g in self.groups) // 3
 
     def set_time(self, stage, time_code):
-        """Re-evaluate geometry at a new time code without touching the camera,
-        so scrubbing/playing an animation doesn't jump the view around."""
-        self._load_geometry(stage, time_code)
+        """Point Hydra at a new time code without touching the camera, so
+        scrubbing/playing an animation doesn't jump the view around."""
+        self.stage = stage
+        self.time_code = time_code
         self.tkExpose(None)
 
     def frame_camera_on_geometry(self):
@@ -102,12 +100,10 @@ class USDGLViewport(OpenGLFrame):
         loaded is actually in view, regardless of the asset's scale/position."""
         self.rot_x, self.rot_y = self.DEFAULT_ROT_X, self.DEFAULT_ROT_Y
 
-        position_arrays = [g["positions"] for g in self.groups if len(g["positions"])]
-        if len(self.point_positions):
-            position_arrays.append(self.point_positions)
-        if len(self.line_positions):
-            position_arrays.append(self.line_positions)
-        if not position_arrays:
+        bbox_cache = UsdGeom.BBoxCache(self.time_code, BBOX_PURPOSES)
+        world_range = bbox_cache.ComputeWorldBound(self.stage.GetPseudoRoot()).ComputeAlignedRange()
+
+        if world_range.IsEmpty():
             self.center = Gf.Vec3d(0, 0, 0)
             self.cam_dist = 10.0
             self.radius = 10.0
@@ -115,15 +111,12 @@ class USDGLViewport(OpenGLFrame):
             self.bbox_max = None
             return
 
-        combined = np.concatenate(position_arrays, axis=0)
-        mins = combined.min(axis=0)
-        maxs = combined.max(axis=0)
-        center = (mins + maxs) / 2.0
-        radius = float(np.linalg.norm(maxs - mins)) / 2.0
+        mins, maxs = world_range.GetMin(), world_range.GetMax()
+        radius = world_range.GetSize().GetLength() / 2.0
 
         self.bbox_min = mins
         self.bbox_max = maxs
-        self.center = Gf.Vec3d(*[float(c) for c in center])
+        self.center = (mins + maxs) / 2.0
         self.radius = radius if radius > 1e-9 else 1.0
         half_fov = math.radians(45.0 / 2.0)
         self.cam_dist = max(1.0, (self.radius / math.sin(half_fov)) * 1.2)
@@ -135,24 +128,12 @@ class USDGLViewport(OpenGLFrame):
         trans = Gf.Matrix4d().SetTranslate(Gf.Vec3d(0, 0, -self.cam_dist))
         return center_mat * rot * trans
 
-    def _get_texture(self, path):
-        tex_id = self.texture_cache.get(path)
-        if tex_id is None:
-            try:
-                tex_id = load_gl_texture(path)
-            except Exception as exc:
-                print(f"Failed to load texture {path}: {exc}")
-                tex_id = 0
-            self.texture_cache[path] = tex_id
-        return tex_id
-
     def _draw_grid(self):
         """A ground grid + origin axes, drawn unlit so there's always
         something to look at (and orbit/zoom against) even with nothing loaded."""
         extent = max(self.GRID_EXTENT, self.radius * 1.5)
         step = extent / 10.0
 
-        GL.glDisable(GL.GL_LIGHTING)
         GL.glColor3f(*self.GRID_COLOR)
         GL.glBegin(GL.GL_LINES)
         i = -extent
@@ -172,7 +153,6 @@ class USDGLViewport(OpenGLFrame):
         GL.glColor3f(0.2, 0.4, 0.9)
         GL.glVertex3f(0, 0, 0); GL.glVertex3f(0, 0, extent * 0.3)
         GL.glEnd()
-        GL.glEnable(GL.GL_LIGHTING)
 
     def _draw_sky_gradient(self):
         """Full-screen vertical gradient (horizon -> sky blue), drawn as an
@@ -185,7 +165,6 @@ class USDGLViewport(OpenGLFrame):
         GL.glPushMatrix()
         GL.glLoadIdentity()
 
-        GL.glDisable(GL.GL_LIGHTING)
         GL.glDisable(GL.GL_DEPTH_TEST)
         GL.glBegin(GL.GL_QUADS)
         GL.glColor3f(*SKY_HORIZON_COLOR); GL.glVertex2f(0, 0)
@@ -194,7 +173,6 @@ class USDGLViewport(OpenGLFrame):
         GL.glColor3f(*SKY_TOP_COLOR); GL.glVertex2f(0, 1)
         GL.glEnd()
         GL.glEnable(GL.GL_DEPTH_TEST)
-        GL.glEnable(GL.GL_LIGHTING)
 
         GL.glPopMatrix()
         GL.glMatrixMode(GL.GL_PROJECTION)
@@ -215,14 +193,23 @@ class USDGLViewport(OpenGLFrame):
         edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
                  (0, 4), (1, 5), (2, 6), (3, 7)]
 
-        GL.glDisable(GL.GL_LIGHTING)
         GL.glColor3f(1.0, 0.85, 0.2)
         GL.glBegin(GL.GL_LINES)
         for a, b in edges:
             GL.glVertex3f(*corners[a])
             GL.glVertex3f(*corners[b])
         GL.glEnd()
-        GL.glEnable(GL.GL_LIGHTING)
+
+    def _render_stage(self, view_matrix, projection_matrix, width, height):
+        self.engine.SetRenderViewport((0, 0, width, height))
+        self.engine.SetCameraState(view_matrix, projection_matrix)
+        self.engine.SetRendererAov("Neye" if self.shading_mode == "Normals" else "color")
+
+        params = UsdImagingGL.RenderParams()
+        params.frame = self.time_code
+        params.drawMode = SHADING_DRAW_MODES[self.shading_mode]
+        params.enableSceneMaterials = self.shading_mode == "Shaded"
+        self.engine.Render(self.stage.GetPseudoRoot(), params)
 
     def redraw(self):
         width = max(1, self.winfo_width())
@@ -237,6 +224,8 @@ class USDGLViewport(OpenGLFrame):
             self._draw_sky_gradient()
 
         if self.background_mode == "Foggy":
+            # Fixed-function fog only affects the grid/bbox overlays below --
+            # Hydra's Storm shaders don't read legacy GL_FOG state.
             GL.glEnable(GL.GL_FOG)
             GL.glFogi(GL.GL_FOG_MODE, GL.GL_LINEAR)
             GL.glFogfv(GL.GL_FOG_COLOR, (*BACKGROUND_COLORS["Foggy"], 1.0))
@@ -253,93 +242,24 @@ class USDGLViewport(OpenGLFrame):
 
         frustum = Gf.Frustum()
         frustum.SetPerspective(45.0, width / height, near, far)
+        view_matrix = self.get_view_matrix()
+        projection_matrix = frustum.ComputeProjectionMatrix()
 
         GL.glMatrixMode(GL.GL_PROJECTION)
         GL.glLoadIdentity()
-        GL.glLoadMatrixd(to_gl_matrix(frustum.ComputeProjectionMatrix()))
+        GL.glLoadMatrixd(to_gl_matrix(projection_matrix))
 
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
-        GL.glLoadMatrixd(to_gl_matrix(self.get_view_matrix()))
+        GL.glLoadMatrixd(to_gl_matrix(view_matrix))
 
         if self.show_grid:
             self._draw_grid()
         if self.show_bbox:
             self._draw_bbox()
 
-        wireframe = self.shading_mode == "Wireframe"
-        show_normals = self.shading_mode == "Normals"
-        use_texture_and_vertex_colors = self.shading_mode == "Shaded"
-
-        GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_LINE if wireframe else GL.GL_FILL)
-        GL.glDisable(GL.GL_LIGHTING) if (wireframe or show_normals) else GL.glEnable(GL.GL_LIGHTING)
-
-        GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
-        GL.glEnableClientState(GL.GL_NORMAL_ARRAY)
-
-        for group in self.groups:
-            texture_path = group["texture_path"] if use_texture_and_vertex_colors else None
-            tex_id = self._get_texture(texture_path) if texture_path else 0
-
-            if tex_id:
-                GL.glEnable(GL.GL_TEXTURE_2D)
-                GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
-                GL.glEnableClientState(GL.GL_TEXTURE_COORD_ARRAY)
-                GL.glTexCoordPointer(2, GL.GL_FLOAT, 0, group["uvs"])
-            else:
-                GL.glDisable(GL.GL_TEXTURE_2D)
-                GL.glDisableClientState(GL.GL_TEXTURE_COORD_ARRAY)
-
-            GL.glVertexPointer(3, GL.GL_FLOAT, 0, group["positions"])
-            GL.glNormalPointer(GL.GL_FLOAT, 0, group["normals"])
-
-            if show_normals:
-                GL.glDisableClientState(GL.GL_COLOR_ARRAY)
-                normal_colors = group["normals"] * 0.5 + 0.5
-                GL.glColorPointer(3, GL.GL_FLOAT, 0, normal_colors)
-                GL.glEnableClientState(GL.GL_COLOR_ARRAY)
-            elif use_texture_and_vertex_colors:
-                GL.glEnableClientState(GL.GL_COLOR_ARRAY)
-                GL.glColorPointer(3, GL.GL_FLOAT, 0, group["colors"])
-            else:
-                GL.glDisableClientState(GL.GL_COLOR_ARRAY)
-                GL.glColor3f(*DEFAULT_COLOR)
-
-            GL.glDrawArrays(GL.GL_TRIANGLES, 0, len(group["positions"]))
-
-        GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_FILL)
-        GL.glEnable(GL.GL_LIGHTING)
-        GL.glDisable(GL.GL_TEXTURE_2D)
-        GL.glDisableClientState(GL.GL_TEXTURE_COORD_ARRAY)
-        GL.glDisableClientState(GL.GL_NORMAL_ARRAY)
-
-        if len(self.point_positions) or len(self.line_positions):
-            self._draw_lightweight_curves_and_points()
-
-        GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
-        GL.glDisableClientState(GL.GL_COLOR_ARRAY)
-
-    def _draw_lightweight_curves_and_points(self):
-        """"Lightweight" mode's Points/BasisCurves representation -- unlit
-        GL_POINTS/GL_LINES, drawn outside the shading-mode branching above
-        since they're not triangles (no normals to light or triangulate)."""
-        GL.glDisable(GL.GL_LIGHTING)
-        GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
-        GL.glEnableClientState(GL.GL_COLOR_ARRAY)
-
-        if len(self.point_positions):
-            GL.glPointSize(6.0)
-            GL.glVertexPointer(3, GL.GL_FLOAT, 0, self.point_positions)
-            GL.glColorPointer(3, GL.GL_FLOAT, 0, self.point_colors)
-            GL.glDrawArrays(GL.GL_POINTS, 0, len(self.point_positions))
-
-        if len(self.line_positions):
-            GL.glLineWidth(2.0)
-            GL.glVertexPointer(3, GL.GL_FLOAT, 0, self.line_positions)
-            GL.glColorPointer(3, GL.GL_FLOAT, 0, self.line_colors)
-            GL.glDrawArrays(GL.GL_LINES, 0, len(self.line_positions))
-
-        GL.glEnable(GL.GL_LIGHTING)
+        if self.stage is not None:
+            self._render_stage(view_matrix, projection_matrix, width, height)
 
     # Mouse Control Callbacks
     def on_mouse_down(self, event):
