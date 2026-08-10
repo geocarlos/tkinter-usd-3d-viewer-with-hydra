@@ -40,12 +40,24 @@ class USDViewerTk(tk.Tk):
                                         variable=self.show_bbox_var, command=self.on_bbox_toggled)
         self.chk_bbox.pack(side=tk.LEFT, padx=(0, 10))
 
+        self.show_grid_var = tk.BooleanVar(value=True)
+        self.chk_grid = tk.Checkbutton(self.toolbar, text="Grid",
+                                        variable=self.show_grid_var, command=self.on_grid_toggled)
+        self.chk_grid.pack(side=tk.LEFT, padx=(0, 10))
+
         tk.Label(self.toolbar, text="Background:").pack(side=tk.LEFT)
         self.background_var = tk.StringVar(value="Black")
         self.background_menu = tk.OptionMenu(self.toolbar, self.background_var,
                                               "Black", "Gray", "Sky", "Foggy",
                                               command=self.on_background_changed)
-        self.background_menu.pack(side=tk.LEFT, padx=(2, 0))
+        self.background_menu.pack(side=tk.LEFT, padx=(2, 10))
+
+        tk.Label(self.toolbar, text="Curves/Points:").pack(side=tk.LEFT)
+        self.curves_points_var = tk.StringVar(value="Solid")
+        self.curves_points_menu = tk.OptionMenu(self.toolbar, self.curves_points_var,
+                                                  "Solid", "Lightweight",
+                                                  command=self.on_curves_points_changed)
+        self.curves_points_menu.pack(side=tk.LEFT, padx=(2, 0))
 
         self.viewport = USDGLViewport(self, width=width, height=height)
         self.viewport.pack(fill=tk.BOTH, expand=True)
@@ -127,9 +139,20 @@ class USDViewerTk(tk.Tk):
         self.viewport.show_bbox = self.show_bbox_var.get()
         self.viewport.tkExpose(None)
 
+    def on_grid_toggled(self):
+        self.viewport.show_grid = self.show_grid_var.get()
+        self.viewport.tkExpose(None)
+
     def on_background_changed(self, mode):
         self.viewport.background_mode = mode
         self.viewport.tkExpose(None)
+
+    def on_curves_points_changed(self, mode):
+        self.viewport.curves_points_mode = mode
+        if self.stage is not None:
+            self._safe_set_time(Usd.TimeCode(self.time_var.get()))
+        else:
+            self.viewport.tkExpose(None)
 
     def reset_view(self):
         self.viewport.frame_camera_on_geometry()

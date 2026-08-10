@@ -8,7 +8,11 @@ from pxr import Usd, Gf
 
 from constants import BACKGROUND_COLORS, DEFAULT_COLOR, SKY_HORIZON_COLOR, SKY_TOP_COLOR
 from gl_helpers import load_gl_texture, to_gl_matrix
-from usd_geometry import extract_triangles
+from usd_geometry import (
+    extract_triangles,
+    extract_lightweight_curves_and_points,
+    extract_solid_curves_and_points,
+)
 
 
 class USDGLViewport(OpenGLFrame):
@@ -17,6 +21,8 @@ class USDGLViewport(OpenGLFrame):
 
     GRID_EXTENT = 10
     GRID_COLOR = (0.25, 0.25, 0.3)
+    DEFAULT_ROT_X = 15.0
+    DEFAULT_ROT_Y = 45.0
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
@@ -25,18 +31,25 @@ class USDGLViewport(OpenGLFrame):
         self.groups = []
         self.texture_cache = {}  # resolved file path -> GL texture id
 
+        self.curves_points_mode = "Solid"  # "Solid" | "Lightweight"
+        self.point_positions = np.zeros((0, 3), dtype=np.float32)
+        self.point_colors = np.zeros((0, 3), dtype=np.float32)
+        self.line_positions = np.zeros((0, 3), dtype=np.float32)
+        self.line_colors = np.zeros((0, 3), dtype=np.float32)
+
         self.center = Gf.Vec3d(0, 0, 0)
         self.cam_dist = 10.0
         self.radius = 10.0  # half-diagonal of the loaded geometry's bounding box
         self.bbox_min = None
         self.bbox_max = None
-        self.rot_x = 30.0
-        self.rot_y = 45.0
+        self.rot_x = self.DEFAULT_ROT_X
+        self.rot_y = self.DEFAULT_ROT_Y
         self.last_mouse_x = 0
         self.last_mouse_y = 0
 
         self.shading_mode = "Shaded"  # "Shaded" | "Solid" | "Wireframe" | "Normals"
         self.show_bbox = False
+        self.show_grid = True
         self.background_mode = "Black"  # "Black" | "Gray" | "Sky" | "Foggy"
 
         self.bind("<ButtonPress-1>", self.on_mouse_down)
@@ -57,8 +70,23 @@ class USDGLViewport(OpenGLFrame):
         GL.glColor3f(*DEFAULT_COLOR)
         GL.glTexEnvi(GL.GL_TEXTURE_ENV, GL.GL_TEXTURE_ENV_MODE, GL.GL_MODULATE)
 
-    def load_stage(self, stage, time_code=Usd.TimeCode.Default()):
+    def _load_geometry(self, stage, time_code):
         self.groups = extract_triangles(stage, time_code)
+        if self.curves_points_mode == "Solid":
+            self.groups += extract_solid_curves_and_points(stage, time_code)
+            self.point_positions = np.zeros((0, 3), dtype=np.float32)
+            self.point_colors = np.zeros((0, 3), dtype=np.float32)
+            self.line_positions = np.zeros((0, 3), dtype=np.float32)
+            self.line_colors = np.zeros((0, 3), dtype=np.float32)
+        else:
+            lightweight = extract_lightweight_curves_and_points(stage, time_code)
+            self.point_positions = lightweight["point_positions"]
+            self.point_colors = lightweight["point_colors"]
+            self.line_positions = lightweight["line_positions"]
+            self.line_colors = lightweight["line_colors"]
+
+    def load_stage(self, stage, time_code=Usd.TimeCode.Default()):
+        self._load_geometry(stage, time_code)
         self.frame_camera_on_geometry()
         self.tkExpose(None)
         return sum(len(g["positions"]) for g in self.groups) // 3
@@ -66,15 +94,19 @@ class USDGLViewport(OpenGLFrame):
     def set_time(self, stage, time_code):
         """Re-evaluate geometry at a new time code without touching the camera,
         so scrubbing/playing an animation doesn't jump the view around."""
-        self.groups = extract_triangles(stage, time_code)
+        self._load_geometry(stage, time_code)
         self.tkExpose(None)
 
     def frame_camera_on_geometry(self):
         """Recenter and pull the orbit camera back so whatever was just
         loaded is actually in view, regardless of the asset's scale/position."""
-        self.rot_x, self.rot_y = 30.0, 45.0
+        self.rot_x, self.rot_y = self.DEFAULT_ROT_X, self.DEFAULT_ROT_Y
 
         position_arrays = [g["positions"] for g in self.groups if len(g["positions"])]
+        if len(self.point_positions):
+            position_arrays.append(self.point_positions)
+        if len(self.line_positions):
+            position_arrays.append(self.line_positions)
         if not position_arrays:
             self.center = Gf.Vec3d(0, 0, 0)
             self.cam_dist = 10.0
@@ -230,7 +262,8 @@ class USDGLViewport(OpenGLFrame):
         GL.glLoadIdentity()
         GL.glLoadMatrixd(to_gl_matrix(self.get_view_matrix()))
 
-        self._draw_grid()
+        if self.show_grid:
+            self._draw_grid()
         if self.show_bbox:
             self._draw_bbox()
 
@@ -278,9 +311,35 @@ class USDGLViewport(OpenGLFrame):
         GL.glEnable(GL.GL_LIGHTING)
         GL.glDisable(GL.GL_TEXTURE_2D)
         GL.glDisableClientState(GL.GL_TEXTURE_COORD_ARRAY)
-        GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
         GL.glDisableClientState(GL.GL_NORMAL_ARRAY)
+
+        if len(self.point_positions) or len(self.line_positions):
+            self._draw_lightweight_curves_and_points()
+
+        GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
         GL.glDisableClientState(GL.GL_COLOR_ARRAY)
+
+    def _draw_lightweight_curves_and_points(self):
+        """"Lightweight" mode's Points/BasisCurves representation -- unlit
+        GL_POINTS/GL_LINES, drawn outside the shading-mode branching above
+        since they're not triangles (no normals to light or triangulate)."""
+        GL.glDisable(GL.GL_LIGHTING)
+        GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
+        GL.glEnableClientState(GL.GL_COLOR_ARRAY)
+
+        if len(self.point_positions):
+            GL.glPointSize(6.0)
+            GL.glVertexPointer(3, GL.GL_FLOAT, 0, self.point_positions)
+            GL.glColorPointer(3, GL.GL_FLOAT, 0, self.point_colors)
+            GL.glDrawArrays(GL.GL_POINTS, 0, len(self.point_positions))
+
+        if len(self.line_positions):
+            GL.glLineWidth(2.0)
+            GL.glVertexPointer(3, GL.GL_FLOAT, 0, self.line_positions)
+            GL.glColorPointer(3, GL.GL_FLOAT, 0, self.line_colors)
+            GL.glDrawArrays(GL.GL_LINES, 0, len(self.line_positions))
+
+        GL.glEnable(GL.GL_LIGHTING)
 
     # Mouse Control Callbacks
     def on_mouse_down(self, event):
