@@ -5,6 +5,7 @@ from pyopengltk import OpenGLFrame
 
 from pxr import Usd, UsdGeom, UsdImagingGL, Glf, Gf
 
+import implicit_surfaces
 from constants import BACKGROUND_COLORS, SKY_HORIZON_COLOR, SKY_TOP_COLOR
 from gl_helpers import to_gl_matrix
 
@@ -52,6 +53,8 @@ class USDGLViewport(OpenGLFrame):
         self.stage = None
         self.time_code = Usd.TimeCode.Default()
         self.up_axis_rotation = None  # set from the stage's upAxis on load_stage()
+        self._implicit_overrides = []  # (path, type_name) pairs from implicit_surfaces.apply_overrides()
+        self.tessellation_segments = implicit_surfaces.QUALITY_PRESETS[implicit_surfaces.DEFAULT_QUALITY]
 
         self.center = Gf.Vec3d(0, 0, 0)
         self.cam_dist = 10.0
@@ -113,6 +116,12 @@ class USDGLViewport(OpenGLFrame):
         self.stage = stage
         self.time_code = time_code
         self.up_axis_rotation = UP_AXIS_ROTATIONS.get(UsdGeom.GetStageUpAxis(stage))
+        # Hydra tessellates Cylinder/Cone/Capsule/Sphere to a single fixed,
+        # low-poly mesh no matter the render settings -- there's no knob for
+        # it anywhere in UsdImagingGL. Replace them with our own, much finer
+        # tessellation, authored non-destructively on the session layer (see
+        # implicit_surfaces.py) so Hydra renders that instead.
+        self._implicit_overrides = implicit_surfaces.apply_overrides(stage, time_code, self.tessellation_segments)
         if self.engine is not None:
             self._create_engine()
         self.frame_camera_on_geometry()
@@ -123,6 +132,12 @@ class USDGLViewport(OpenGLFrame):
         scrubbing/playing an animation doesn't jump the view around."""
         self.stage = stage
         self.time_code = time_code
+        # Also covers hot-reload: main_window calls this (not load_stage())
+        # after Reload()-ing the same stage, so this is the only place a
+        # hand-edited static radius/height on an already-discovered prim
+        # gets picked back up.
+        if self._implicit_overrides:
+            implicit_surfaces.refresh_overrides(stage, self._implicit_overrides, time_code, self.tessellation_segments)
         self.tkExpose(None)
 
     def frame_camera_on_geometry(self):
