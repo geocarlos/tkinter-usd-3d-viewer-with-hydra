@@ -4,6 +4,8 @@ from tkinter import filedialog
 
 from pxr import Usd
 
+import implicit_surfaces
+import settings
 from viewport import USDGLViewport
 
 
@@ -12,6 +14,11 @@ class USDViewerTk(tk.Tk):
         super().__init__()
         self.title("Tkinter USD 3D Viewer")
         self.geometry(f"{width}x{height}")
+
+        self.settings = settings.load()
+        quality = self.settings.get("tessellation_quality", implicit_surfaces.DEFAULT_QUALITY)
+        if quality not in implicit_surfaces.QUALITY_PRESETS:
+            quality = implicit_surfaces.DEFAULT_QUALITY
         # Without this, the viewport's own requested size (below) plus the
         # toolbar/playback/status rows can exceed a hand-shrunk window, and
         # Tk collapses whichever packed row loses out to 1x1 -- invisible,
@@ -55,7 +62,14 @@ class USDViewerTk(tk.Tk):
         self.background_menu = tk.OptionMenu(self.toolbar, self.background_var,
                                               "Black", "Gray", "Sky", "Foggy",
                                               command=self.on_background_changed)
-        self.background_menu.pack(side=tk.LEFT, padx=(2, 0))
+        self.background_menu.pack(side=tk.LEFT, padx=(2, 10))
+
+        tk.Label(self.toolbar, text="Quality:").pack(side=tk.LEFT)
+        self.quality_var = tk.StringVar(value=quality)
+        self.quality_menu = tk.OptionMenu(self.toolbar, self.quality_var,
+                                           *implicit_surfaces.QUALITY_PRESETS.keys(),
+                                           command=self.on_quality_changed)
+        self.quality_menu.pack(side=tk.LEFT, padx=(2, 0))
 
         # No explicit width/height here -- pack(fill=BOTH, expand=True) sizes
         # the viewport from whatever room remains after the rows above/below
@@ -63,6 +77,7 @@ class USDViewerTk(tk.Tk):
         # for the viewport too (as before) starves those rows of space.
         self.viewport = USDGLViewport(self)
         self.viewport.pack(fill=tk.BOTH, expand=True)
+        self.viewport.set_tessellation_segments(implicit_surfaces.QUALITY_PRESETS[quality])
 
         self.playback = tk.Frame(self)
         self.playback.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
@@ -136,6 +151,11 @@ class USDViewerTk(tk.Tk):
     def on_shading_changed(self, mode):
         self.viewport.shading_mode = mode
         self.viewport.tkExpose(None)
+
+    def on_quality_changed(self, mode):
+        self.viewport.set_tessellation_segments(implicit_surfaces.QUALITY_PRESETS[mode])
+        self.settings["tessellation_quality"] = mode
+        settings.save(self.settings)
 
     def on_bbox_toggled(self):
         self.viewport.show_bbox = self.show_bbox_var.get()

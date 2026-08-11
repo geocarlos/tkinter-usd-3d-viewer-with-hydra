@@ -140,6 +140,22 @@ class USDGLViewport(OpenGLFrame):
             implicit_surfaces.refresh_overrides(stage, self._implicit_overrides, time_code, self.tessellation_segments)
         self.tkExpose(None)
 
+    def set_tessellation_segments(self, segments):
+        """Change the implicit-surface tessellation density (see the
+        "Quality" dropdown in main_window.py) and, if a stage is already
+        loaded, immediately re-tessellate it at the new resolution.
+
+        Uses refresh_overrides() (topology_too=True), not apply_overrides()
+        -- the prims to update are already typed "Mesh" from the initial
+        load_stage() pass, so re-traversing the stage looking for
+        Cylinder/Cone/Capsule/Sphere prims would find nothing."""
+        self.tessellation_segments = segments
+        if self.stage is not None and self._implicit_overrides:
+            implicit_surfaces.refresh_overrides(
+                self.stage, self._implicit_overrides, self.time_code,
+                self.tessellation_segments, topology_too=True)
+            self.tkExpose(None)
+
     def frame_camera_on_geometry(self):
         """Recenter and pull the orbit camera back so whatever was just
         loaded is actually in view, regardless of the asset's scale/position."""
