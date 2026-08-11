@@ -299,6 +299,19 @@ class USDGLViewport(OpenGLFrame):
         params.frame = self.time_code
         params.drawMode = SHADING_DRAW_MODES[self.shading_mode]
         params.enableSceneMaterials = self.shading_mode == "Shaded"
+        # RenderParams.clearColor defaults to opaque black, and Hydra clears
+        # the *entire* viewport to it when compositing -- not just the parts
+        # it draws geometry into. Left alone, that silently overwrites
+        # whatever background redraw() already drew (solid color or the sky
+        # gradient) with flat black the moment any stage is loaded, no
+        # matter what background_mode is selected. Matching it to our
+        # chosen background makes Hydra's own clear indistinguishable from
+        # ours for the solid modes; "Sky" has no single color to match
+        # (it's a gradient), so its horizon color is the closest Hydra's
+        # clear can represent.
+        clear_rgb = SKY_HORIZON_COLOR if self.background_mode == "Sky" else \
+            BACKGROUND_COLORS.get(self.background_mode, BACKGROUND_COLORS["Black"])
+        params.clearColor = Gf.Vec4f(*clear_rgb, 1.0)
         self.engine.Render(self.stage.GetPseudoRoot(), params)
 
     def redraw(self):
