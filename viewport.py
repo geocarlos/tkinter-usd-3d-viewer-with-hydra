@@ -34,6 +34,39 @@ SHADING_DRAW_MODES = {
     "Normals": UsdImagingGL.DrawMode.DRAW_SHADED_SMOOTH,
 }
 
+# Camera-space 3-point rig injected via SetLightingState so geometry is
+# always well-lit regardless of whether the stage has UsdLux lights.
+def _make_default_lighting():
+    key = Glf.SimpleLight()
+    key.isCameraSpaceLight = True
+    key.position = Gf.Vec4f(-0.6, 0.8, 1.0, 0.0)
+    key.diffuse = Gf.Vec4f(0.9, 0.88, 0.85, 1.0)
+    key.specular = Gf.Vec4f(0.35, 0.35, 0.35, 1.0)
+    key.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
+
+    fill = Glf.SimpleLight()
+    fill.isCameraSpaceLight = True
+    fill.position = Gf.Vec4f(1.0, 0.2, 0.5, 0.0)
+    fill.diffuse = Gf.Vec4f(0.35, 0.37, 0.42, 1.0)
+    fill.specular = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
+    fill.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
+
+    rim = Glf.SimpleLight()
+    rim.isCameraSpaceLight = True
+    rim.position = Gf.Vec4f(0.3, 0.6, -1.0, 0.0)
+    rim.diffuse = Gf.Vec4f(0.2, 0.2, 0.25, 1.0)
+    rim.specular = Gf.Vec4f(0.1, 0.1, 0.12, 1.0)
+    rim.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
+
+    material = Glf.SimpleMaterial()
+    material.ambient = Gf.Vec4f(0.07, 0.07, 0.07, 1.0)
+    material.specular = Gf.Vec4f(0.15, 0.15, 0.15, 1.0)
+    material.shininess = 32.0
+
+    return [key, fill, rim], material, Gf.Vec4f(0.07, 0.07, 0.07, 1.0)
+
+_DEFAULT_LIGHTS, _DEFAULT_MATERIAL, _DEFAULT_AMBIENT = _make_default_lighting()
+
 
 class USDGLViewport(OpenGLFrame):
     """An OpenGL-backed Tkinter widget that renders a USD stage through
@@ -125,6 +158,10 @@ class USDGLViewport(OpenGLFrame):
         self.stage = stage
         self.time_code = time_code
         self.up_axis_rotation = UP_AXIS_ROTATIONS.get(UsdGeom.GetStageUpAxis(stage))
+        from pxr import UsdLux
+        self._stage_has_lights = any(
+            prim.HasAPI(UsdLux.LightAPI) for prim in stage.Traverse()
+        )
         # Hydra tessellates Cylinder/Cone/Capsule/Sphere to a single fixed,
         # low-poly mesh no matter the render settings -- there's no knob for
         # it anywhere in UsdImagingGL. Replace them with our own, much finer
@@ -293,12 +330,18 @@ class USDGLViewport(OpenGLFrame):
 
         self.engine.SetRenderViewport((0, 0, width, height))
         self.engine.SetCameraState(view_matrix, projection_matrix)
+        self.engine.SetLightingState(_DEFAULT_LIGHTS, _DEFAULT_MATERIAL, _DEFAULT_AMBIENT)
         self.engine.SetRendererAov("Neye" if self.shading_mode == "Normals" else "color")
 
         params = UsdImagingGL.RenderParams()
         params.frame = self.time_code
         params.drawMode = SHADING_DRAW_MODES[self.shading_mode]
         params.enableSceneMaterials = self.shading_mode == "Shaded"
+        # Use scene lights only in Shaded mode when the stage has them;
+        # all other modes and light-less stages use the injected 3-point rig.
+        params.enableSceneLights = (
+            self.shading_mode == "Shaded" and getattr(self, "_stage_has_lights", False)
+        )
         # RenderParams.clearColor defaults to opaque black, and Hydra clears
         # the *entire* viewport to it when compositing -- not just the parts
         # it draws geometry into. Left alone, that silently overwrites
