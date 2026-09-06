@@ -104,6 +104,23 @@ class USDViewerTk(tk.Tk):
         self._play_job = None
 
         self.after(1000, self._check_hot_reload)
+        self.after_idle(self._apply_dynamic_minsize)
+
+    def _apply_dynamic_minsize(self):
+        """The minsize(width, height) call above only exists to stop Tk from
+        collapsing a packed row to 1x1 during the very first layout pass;
+        pinning it forever to the launch size means the window could never
+        be shrunk smaller than that again. Once that first layout has
+        actually happened (after_idle fires after it), replace it with the
+        real minimum: the widest toolbar-ish row's natural width, plus every
+        non-viewport row's natural height, leaving the viewport itself a
+        small but usable minimum."""
+        self.update_idletasks()
+        min_width = max(self.open_bar.winfo_reqwidth(), self.toolbar.winfo_reqwidth(),
+                         self.playback.winfo_reqwidth(), self.status.winfo_reqwidth())
+        min_height = (self.open_bar.winfo_reqheight() + self.toolbar.winfo_reqheight() +
+                      self.playback.winfo_reqheight() + self.status.winfo_reqheight())
+        self.minsize(max(min_width, 200), min_height + 150)
 
     def _check_hot_reload(self):
         if self.stage_path:
@@ -129,12 +146,13 @@ class USDViewerTk(tk.Tk):
             self.stage.Reload()
         except Exception as exc:
             print(f"Hot-reload skipped for {self.stage_path}: {exc}")
+            self.status.config(text=f"Hot-reload failed for {os.path.basename(self.stage_path)}: {exc}")
             return  # syntax error mid-save; keep showing the last good version and retry on the next save
 
-        if self._safe_set_time(Usd.TimeCode(self.time_var.get())):
+        if self._safe_set_time(Usd.TimeCode(self.time_var.get()), force=True):
             self.status.config(text=f"Hot-reloaded: {os.path.basename(self.stage_path)}")
 
-    def _safe_set_time(self, time_code):
+    def _safe_set_time(self, time_code, force=False):
         """viewport.set_time() can raise if the stage's current content is
         broken -- e.g. Reload() succeeded but a value USD couldn't parse
         cleanly came back as an UnregisteredValue placeholder. Never let that
@@ -142,10 +160,11 @@ class USDViewerTk(tk.Tk):
         silently; on failure the last successfully rendered geometry just
         stays on screen."""
         try:
-            self.viewport.set_time(self.stage, time_code)
+            self.viewport.set_time(self.stage, time_code, force=force)
             return True
         except Exception as exc:
             print(f"Failed to refresh viewport for {self.stage_path}: {exc}")
+            self.status.config(text=f"Failed to update view: {exc}")
             return False
 
     def on_shading_changed(self, mode):
@@ -195,8 +214,8 @@ class USDViewerTk(tk.Tk):
         self.lbl_filename.config(text=filename)
         self.btn_open.config(text="Open Another USD File")
 
-        self.viewport.load_stage(self.stage)
-        self._setup_playback_range()
+        initial_time = self._setup_playback_range()
+        self.viewport.load_stage(self.stage, initial_time)
 
         if self.viewport.bbox_min is None:
             self.status.config(text="Opened, but found no geometry to render")
@@ -213,6 +232,7 @@ class USDViewerTk(tk.Tk):
                                  state=tk.NORMAL if has_range else tk.DISABLED)
         self.time_var.set(start)
         self.btn_play.config(state=tk.NORMAL if has_range else tk.DISABLED)
+        return Usd.TimeCode(start) if has_range else Usd.TimeCode.Default()
 
     def on_scrub(self, value):
         if self.stage is None:
