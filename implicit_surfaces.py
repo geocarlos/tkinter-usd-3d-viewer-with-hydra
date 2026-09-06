@@ -171,12 +171,18 @@ def _sphere_topology(n, m):
         counts.append(3)
         indices += [north_idx, ring_start(1) + i, ring_start(1) + j]
 
+    # r1 (closer to the south pole) listed before r0 here -- not a typo: with
+    # r0 first, every quad's winding-derived (cross-product) normal came out
+    # exactly opposite (dot=-1) from its own authored outward normal on all
+    # 448 interior-band faces, versus the two pole caps (32 faces each),
+    # which use a fan order that was already correct. Same class of bug as
+    # the capsule's hemisphere flip below, just never applied here.
     for band in range(1, m - 1):
         r0, r1 = ring_start(band), ring_start(band + 1)
         for i in range(n):
             j = (i + 1) % n
             counts.append(4)
-            indices += [r0 + i, r0 + j, r1 + j, r1 + i]
+            indices += [r1 + i, r1 + j, r0 + j, r0 + i]
 
     last = ring_start(m - 1)
     for i in range(n):
