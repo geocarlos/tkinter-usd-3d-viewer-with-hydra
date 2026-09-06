@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Windows installer build output
+packaging/out/

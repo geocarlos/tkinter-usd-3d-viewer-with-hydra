@@ -1,0 +1,38 @@
+name: TkinterUsdViewer
+version: "0.1.0"
+channels:
+  - conda-forge
+specs:
+  - python=3.14
+  - numpy>=2.5.2
+  - pillow>=12.3.0
+  - pyopengl>=3.1.10
+  - openusd>=26.5
+
+company: geocarlos
+uninstall_name: "Tkinter USD 3D Viewer"
+welcome_image_text: "Tkinter USD 3D Viewer"
+header_image_text: "Tkinter USD 3D Viewer"
+icon_image: icon.ico
+license_file: LICENSE.txt
+
+extra_files:
+  - ../app.py: app.py
+  - ../constants.py: constants.py
+  - ../gl_helpers.py: gl_helpers.py
+  - ../implicit_surfaces.py: implicit_surfaces.py
+  - ../main_window.py: main_window.py
+  - ../settings.py: settings.py
+  - ../viewport.py: viewport.py
+  - vendor/pyopengltk/__init__.py: Lib/site-packages/pyopengltk/__init__.py
+  - vendor/pyopengltk/base.py: Lib/site-packages/pyopengltk/base.py
+  - vendor/pyopengltk/darwin.py: Lib/site-packages/pyopengltk/darwin.py
+  - vendor/pyopengltk/linux.py: Lib/site-packages/pyopengltk/linux.py
+  - vendor/pyopengltk/opengl.py: Lib/site-packages/pyopengltk/opengl.py
+  - vendor/pyopengltk/win32.py: Lib/site-packages/pyopengltk/win32.py
+  - vendor/pyopengltk/LICENSE: Lib/site-packages/pyopengltk/LICENSE
+  - icon.ico: icon.ico
+  - make_shortcut.ps1: make_shortcut.ps1
+
+post_install: post_install.bat
+pre_uninstall: pre_uninstall.bat
