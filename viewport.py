@@ -131,28 +131,6 @@ class USDGLViewport(OpenGLFrame):
         next file). Not needed for time/camera changes on the same stage."""
         self.tkMakeCurrent()
         self.engine = UsdImagingGL.Engine()
-        self._set_lighting_state()
-
-    def _set_lighting_state(self):
-        """A single strong, sun-like directional light, standing in for a
-        scene light when the stage doesn't author its own (UsdImagingGL
-        falls back to this only when the stage has no UsdLux lights).
-
-        The previous values here (diffuse=1.4, sceneAmbient=0.3) rendered so
-        dimly -- barely brighter than the material's own unlit response --
-        that changing the background color was hard to even perceive.
-        Boosted well past that, with a slightly warm key and a slightly
-        cool, dim ambient fill (real sky-fill, not a flat gray wash) so the
-        shadowed side still reads as *a side in shadow* rather than pure
-        black."""
-        light = Glf.SimpleLight()
-        light.position = Gf.Vec4f(5.0, 10.0, 5.0, 0.0)
-        light.diffuse = Gf.Vec4f(3.2, 3.05, 2.85, 1.0)
-        light.specular = Gf.Vec4f(2.0, 2.0, 2.0, 1.0)
-        light.ambient = Gf.Vec4f(0.0, 0.0, 0.0, 1.0)
-        material = Glf.SimpleMaterial()
-        scene_ambient = Gf.Vec4f(0.15, 0.16, 0.18, 1.0)
-        self.engine.SetLightingState([light], material, scene_ambient)
 
     def load_stage(self, stage, time_code=Usd.TimeCode.Default()):
         self.stage = stage
@@ -173,17 +151,20 @@ class USDGLViewport(OpenGLFrame):
         self.frame_camera_on_geometry()
         self.tkExpose(None)
 
-    def set_time(self, stage, time_code):
+    def set_time(self, stage, time_code, force=False):
         """Point Hydra at a new time code without touching the camera, so
-        scrubbing/playing an animation doesn't jump the view around."""
+        scrubbing/playing an animation doesn't jump the view around.
+
+        `force=True` is for hot-reload: main_window calls this (not
+        load_stage()) after Reload()-ing the same stage, so this is the
+        only place a hand-edited *static* radius/height on an
+        already-discovered prim gets picked back up -- which requires
+        recomputing every prim, not just the time-varying ones."""
         self.stage = stage
         self.time_code = time_code
-        # Also covers hot-reload: main_window calls this (not load_stage())
-        # after Reload()-ing the same stage, so this is the only place a
-        # hand-edited static radius/height on an already-discovered prim
-        # gets picked back up.
         if self._implicit_overrides:
-            implicit_surfaces.refresh_overrides(stage, self._implicit_overrides, time_code, self.tessellation_segments)
+            implicit_surfaces.refresh_overrides(
+                stage, self._implicit_overrides, time_code, self.tessellation_segments, force=force)
         self.tkExpose(None)
 
     def set_tessellation_segments(self, segments):

@@ -403,11 +403,12 @@ def apply_overrides(stage, time_code, segments):
     candidates by `prim.GetTypeName()`, which is already "Mesh" for any prim
     a *previous* call already overrode. Re-tessellating at a new `segments`
     value belongs to refresh_overrides() instead, using the (path,
-    original_type_name) pairs this returns.
+    original_type_name, is_time_varying) triples this returns.
 
-    Returns those (prim_path, original_type_name) pairs, so the caller can
-    keep the geometry in sync as time, the underlying file, or the
-    tessellation quality changes (see refresh_overrides()).
+    Returns those (prim_path, original_type_name, is_time_varying) triples,
+    so the caller can keep the geometry in sync as time, the underlying
+    file, or the tessellation quality changes (see refresh_overrides()),
+    and can skip recomputing prims that never animate.
     """
     overridden = []
     with Usd.EditContext(stage, stage.GetSessionLayer()):
@@ -415,29 +416,38 @@ def apply_overrides(stage, time_code, segments):
             type_name = prim.GetTypeName()
             if type_name not in MANAGED_TYPES:
                 continue
-            _author_mesh(stage, prim, type_name, time_code, segments)
-            overridden.append((prim.GetPath(), type_name))
+            is_time_varying = _author_mesh(stage, prim, type_name, time_code, segments)
+            overridden.append((prim.GetPath(), type_name, is_time_varying))
     return overridden
 
 
-def refresh_overrides(stage, overridden, time_code, segments, topology_too=False):
+def refresh_overrides(stage, overridden, time_code, segments, topology_too=False, force=False):
     """Recompute geometry for every previously-overridden prim (the list
     apply_overrides() returned) at `time_code`, at the given `segments`
     resolution.
 
-    With `topology_too=False` (the default), only points/normals are
-    touched -- cheap enough to call on every time-code change, and it also
-    picks up a hot-reloaded edit to a *static* radius/height/axis value, not
-    just genuine animation, since there's no reliable way to tell those two
-    cases apart from here.
+    With `topology_too=False` and `force=False` (the defaults), a prim whose
+    shape attributes were never time-varying at discovery time is skipped
+    entirely -- cheap enough to call on every time-code change (including
+    every playback tick) without re-tessellating geometry that can't have
+    changed.
+
+    Pass `force=True` for a hot-reloaded stage: a reload can edit a
+    *static* radius/height/axis value on disk, which looks identical to "no
+    change" from here, so every prim must be recomputed regardless of its
+    is_time_varying flag.
 
     Pass `topology_too=True` when `segments` itself has changed (e.g. the
     user picked a different tessellation quality): apply_overrides() can't
     be called again for this since the prims it would look for are already
     typed "Mesh" from the first pass, so this reuses the known
-    (path, original_type_name) list instead of re-traversing the stage."""
+    (path, original_type_name, is_time_varying) list instead of
+    re-traversing the stage -- every prim is recomputed regardless of
+    is_time_varying, since the requested tessellation density changed."""
     with Usd.EditContext(stage, stage.GetSessionLayer()):
-        for path, type_name in overridden:
+        for path, type_name, is_time_varying in overridden:
+            if not topology_too and not force and not is_time_varying:
+                continue
             prim = stage.GetPrimAtPath(path)
             if prim:
                 _author_mesh(stage, prim, type_name, time_code, segments, topology_too=topology_too)
@@ -456,7 +466,7 @@ def _author_mesh(stage, prim, type_name, time_code, segments, topology_too=True)
     # These meshes are the finished surface, not a control cage.
     mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
 
-    points, normals, _ = compute_mesh(type_name, prim, time_code, segments)
+    points, normals, is_time_varying = compute_mesh(type_name, prim, time_code, segments)
     mesh.CreatePointsAttr(Vt.Vec3fArray([Gf.Vec3f(*p) for p in points]))
 
     if topology_too:
@@ -469,3 +479,5 @@ def _author_mesh(stage, prim, type_name, time_code, segments, topology_too=True)
 
     if display_color is not None and not mesh.GetDisplayColorAttr().HasAuthoredValue():
         mesh.CreateDisplayColorAttr(display_color)
+
+    return is_time_varying
