@@ -25,6 +25,19 @@ A desktop viewer for [OpenUSD](https://openusd.org/) files, built with Tkinter a
 conda env create -f environment.yml
 ```
 
+### Windows installer
+
+Windows users who don't want to use conda/the terminal can instead install the app via a self-contained `.exe` installer, which adds a "Tkinter USD 3D Viewer" Start Menu shortcut that launches the app directly (no console window, no `conda activate`).
+
+To build the installer yourself:
+
+```sh
+conda create -n constructor-build -c conda-forge constructor nsis
+conda run -n constructor-build constructor packaging --output-dir packaging/out
+```
+
+This produces `packaging/out/TkinterUsdViewer-<version>-Windows-x86_64.exe`. It bundles the same conda-forge packages as `environment.yml` (so it's ~400MB+, mostly `openusd`'s own dependency tree, notably Qt/PySide6 which this app doesn't use but which `openusd` depends on) plus a vendored copy of `pyopengltk` (`packaging/vendor/`, since it's pip-only and not on conda-forge) and this repo's own `.py` files.
+
 ## Usage
 
 ```sh
@@ -56,6 +69,7 @@ Click **Open USD File** to load a stage, then:
 | `viewport.py` | `USDGLViewport` — the OpenGL Tkinter widget: orbit camera, Hydra (`UsdImagingGL.Engine`) rendering, grid/bbox overlays, mouse input |
 | `gl_helpers.py` | Generic OpenGL helper — `Gf.Matrix4d` to `glLoadMatrixd` layout conversion |
 | `constants.py` | Shared background-color constants |
+| `packaging/` | `constructor` config, vendored `pyopengltk`, and post-install/uninstall scripts for the Windows installer |
 
 ## Limitations
 
