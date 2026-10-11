@@ -23,6 +23,8 @@ extra_files:
   - ../implicit_surfaces.py: implicit_surfaces.py
   - ../main_window.py: main_window.py
   - ../settings.py: settings.py
+  - ../stage_fixups.py: stage_fixups.py
+  - ../assets/env.png: assets/env.png
   - ../viewport.py: viewport.py
   - vendor/pyopengltk/__init__.py: Lib/site-packages/pyopengltk/__init__.py
   - vendor/pyopengltk/base.py: Lib/site-packages/pyopengltk/base.py
