@@ -6,6 +6,7 @@ from pyopengltk import OpenGLFrame
 from pxr import Usd, UsdGeom, UsdImagingGL, Glf, Gf
 
 import implicit_surfaces
+import stage_fixups
 from constants import BACKGROUND_COLORS, SKY_HORIZON_COLOR, SKY_TOP_COLOR
 from gl_helpers import to_gl_matrix
 
@@ -137,9 +138,13 @@ class USDGLViewport(OpenGLFrame):
         self.time_code = time_code
         self.up_axis_rotation = UP_AXIS_ROTATIONS.get(UsdGeom.GetStageUpAxis(stage))
         from pxr import UsdLux
+        stage_fixups.apply_missing_binding_apis(stage)
         self._stage_has_lights = any(
             prim.HasAPI(UsdLux.LightAPI) for prim in stage.Traverse()
         )
+        if not self._stage_has_lights:
+            stage_fixups.add_default_dome(stage)
+            self._stage_has_lights = True
         # Hydra tessellates Cylinder/Cone/Capsule/Sphere to a single fixed,
         # low-poly mesh no matter the render settings -- there's no knob for
         # it anywhere in UsdImagingGL. Replace them with our own, much finer
@@ -220,14 +225,22 @@ class USDGLViewport(OpenGLFrame):
         half_fov = math.radians(45.0 / 2.0)
         self.cam_dist = max(1.0, (self.radius / math.sin(half_fov)) * 1.2)
 
+    def _orbit_rotation(self):
+        """Turntable orbit: yaw about the *world* up axis first, then pitch
+        about the camera's own X axis (USD matrices are row-vector, so the
+        left factor applies first). The reverse order -- pitch about world X,
+        then yaw about the screen's vertical -- makes vertical drags roll the
+        scene sideways (and appear inverted) once it has been yawed."""
+        return Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0, 1, 0), self.rot_y)) * \
+               Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), self.rot_x))
+
     def get_view_matrix(self):
         """The shared camera used for the grid and bounding-box overlay --
         both already in display space (Y-up). Hydra's camera additionally
         prepends the up-axis correction; see _render_stage()."""
         center_mat = Gf.Matrix4d().SetTranslate(-self.center)
-        rot = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), self.rot_x)) * \
-              Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0, 1, 0), self.rot_y))
-        trans = Gf.Matrix4d().SetTranslate(Gf.Vec3d(0, 0, -self.cam_dist))
+        rot = self._orbit_rotation()
+        trans =Gf.Matrix4d().SetTranslate(Gf.Vec3d(0, 0, -self.cam_dist))
         return center_mat * rot * trans
 
     def _draw_grid(self):
@@ -398,7 +411,9 @@ class USDGLViewport(OpenGLFrame):
         dy = event.y - self.last_mouse_y
 
         self.rot_y += dx * 0.5
-        self.rot_x += dy * 0.5
+        # Clamp pitch so the camera can't flip over the poles (which would
+        # reverse the horizontal drag direction).
+        self.rot_x = max(-90.0, min(90.0, self.rot_x + dy * 0.5))
 
         self.last_mouse_x = event.x
         self.last_mouse_y = event.y
@@ -420,9 +435,7 @@ class USDGLViewport(OpenGLFrame):
         """World-space (display-space; see UP_AXIS_ROTATIONS) right/up unit
         vectors for the camera's current orbit orientation, used to convert
         a screen-space pan drag into a world-space offset for self.center."""
-        rot = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), self.rot_x)) * \
-              Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0, 1, 0), self.rot_y))
-        inv_rot = rot.GetInverse()
+        inv_rot = self._orbit_rotation().GetInverse()
         return inv_rot.TransformDir(Gf.Vec3d(1, 0, 0)), inv_rot.TransformDir(Gf.Vec3d(0, 1, 0))
 
     def on_pan_down(self, event):
